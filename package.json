@@ -1,0 +1,11 @@
+{
+  "name": "test-audio-vuanalog",
+  "version": "1.0.0",
+  "description": "Analog VU Ballistics Meter softapp for APK.audio",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "author": "Anthony Kuzub",
+  "license": "MIT"
+}

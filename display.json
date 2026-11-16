@@ -1,0 +1,10 @@
+{
+  "name": "Analog VU Ballistics Meter",
+  "icon": "\ud83e\udded",
+  "group": "Test & Measurement",
+  "subGroup": "Audio Scopes",
+  "description": "Dual vintage moving-coil analog VU meter modeled with ANSI C16.5 300ms ballistic needle response (-20 to +3 VU).",
+  "app": "APK:Softapps/TEST/TEST.AUDIO.VuAnalog/index.html",
+  "topic": "APK.audio/Test/VuAnalog",
+  "autostart": false
+}
