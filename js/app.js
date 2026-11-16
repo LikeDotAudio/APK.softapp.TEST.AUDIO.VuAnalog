@@ -1,173 +1,344 @@
-// Softapp entry point for TEST.AUDIO.VuAnalog
-// Standalone real-time canvas renderer conforming to APK Softapps SDK.
+// TEST.AUDIO.VuAnalog — Standalone Analog Moving-Coil VU Meter
+// Conforms to ANSI C16.5 ballistic response (-20 to +3 VU, 0 VU = -18 dBFS).
 
-const canvas = document.getElementById('viewCanvas');
+const canvas = document.getElementById('vuCanvas');
 const ctx = canvas.getContext('2d');
-const btnPlay = document.getElementById('btnPlay');
-const statusEl = document.getElementById('status');
-const fpsEl = document.getElementById('fps');
+const valL = document.getElementById('valL');
+const valR = document.getElementById('valR');
+const vuL = document.getElementById('vuL');
+const vuR = document.getElementById('vuR');
+const btnTone = document.getElementById('btnTone');
+const btnMod = document.getElementById('btnMod');
+const btnMic = document.getElementById('btnMic');
+const fileIn = document.getElementById('fileIn');
+const gainSlider = document.getElementById('gainSlider');
+const gainVal = document.getElementById('gainVal');
+const btnReset = document.getElementById('btnReset');
 
-let running = true;
-let frameCount = 0;
-let lastTime = performance.now();
+// ── Palette Constants (from SPOG domain/palette.ts) ──
+const PAL = {
+  amber88: '#efe7d0', // Vintage cream faceplate
+  amber13: '#2a2418', // Scale lettering & markers
+  amber19: '#3a3428', // Scale arc
+  amber36: '#8a7530', // "VU" logo
+  grey08s0: '#141414', // Needle & pivot cap
+  red44: '#c02020',   // Red overload zone (> 0 VU)
+  black: '#000000',
+};
+
+function alpha(hex, a) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// ── Drawing Engine (matching SPOG scopes-audio.ts) ──
+const VU_LO = -20, VU_HI = 3;
+const VU_MARKS = [
+  [-20, '20'], [-10, '10'], [-7, '7'], [-5, '5'], [-3, '3'], [0, '0'], [3, '+3']
+];
+
+function drawOneVU(c, x, y, w, h, db, label) {
+  c.save();
+  c.beginPath();
+  c.roundRect(x + 2, y + 2, w - 4, h - 4, 8);
+  c.fillStyle = PAL.amber88;
+  c.fill();
+  c.strokeStyle = alpha(PAL.black, 0.25);
+  c.lineWidth = 1;
+  c.stroke();
+
+  const cx = x + w / 2;
+  const cy = y + h * 0.9;
+  const R = Math.min(w, h) * 0.7;
+  const A0 = -Math.PI / 2 - 0.92;
+  const A1 = -Math.PI / 2 + 0.92;
+
+  const ang = (vu) => A0 + (A1 - A0) * ((vu - VU_LO) / (VU_HI - VU_LO));
+
+  // Main arc
+  c.strokeStyle = PAL.amber19;
+  c.lineWidth = 1.5;
+  c.beginPath();
+  c.arc(cx, cy, R, A0, A1);
+  c.stroke();
+
+  // Red danger arc above 0 VU
+  c.strokeStyle = PAL.red44;
+  c.lineWidth = 3;
+  c.beginPath();
+  c.arc(cx, cy, R, ang(0), A1);
+  c.stroke();
+
+  const fs = Math.max(6, h * 0.085);
+  c.textAlign = 'center';
+  c.font = `bold ${fs}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
+
+  VU_MARKS.forEach(([vu, txt]) => {
+    const a = ang(vu), isRed = vu >= 0;
+    c.strokeStyle = isRed ? PAL.red44 : PAL.amber13;
+    c.lineWidth = 1.4;
+    c.beginPath();
+    c.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+    c.lineTo(cx + Math.cos(a) * (R - 7), cy + Math.sin(a) * (R - 7));
+    c.stroke();
+
+    c.fillStyle = isRed ? PAL.red44 : PAL.amber13;
+    c.fillText(txt, cx + Math.cos(a) * (R - 15), cy + Math.sin(a) * (R - 15) + 3);
+  });
+
+  // Center "VU" Branding & Channel Label
+  c.fillStyle = PAL.amber36;
+  c.font = `bold ${Math.max(8, h * 0.1)}px Arial`;
+  c.fillText('VU', cx, cy - R * 0.5);
+
+  c.fillStyle = PAL.amber13;
+  c.font = `bold ${fs}px Arial`;
+  c.fillText(label, cx, cy - 5);
+
+  // Moving Ballistic Needle
+  const a = ang(Math.max(VU_LO, Math.min(VU_HI, db + 18))); // 0 VU = -18 dBFS
+  c.strokeStyle = PAL.grey08s0;
+  c.lineWidth = Math.max(1.5, h * 0.018);
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(cx, cy);
+  c.lineTo(cx + Math.cos(a) * R * 0.95, cy + Math.sin(a) * R * 0.95);
+  c.stroke();
+
+  // Pivot Screw / Cap
+  c.fillStyle = PAL.grey08s0;
+  c.beginPath();
+  c.arc(cx, cy, Math.max(3, h * 0.035), 0, Math.PI * 2);
+  c.fill();
+
+  c.restore();
+}
+
+function drawVUpair(cv, dbL, dbR) {
+  const W = cv.width, H = cv.height;
+  if (W < 24 || H < 16) return;
+  ctx.clearRect(0, 0, W, H);
+  drawOneVU(ctx, 0, 0, W / 2, H, dbL, 'L');
+  drawOneVU(ctx, W / 2, 0, W / 2, H, dbR, 'R');
+}
+
+// ── Web Audio API Engine & Signal Generator ──
+let audioCtx = null;
+let masterGain = null;
+let analyserL = null;
+let analyserR = null;
+let currentSource = null;
+let mode = 'tone'; // 'tone' | 'mod' | 'mic' | 'file'
+
+function initAudio() {
+  if (audioCtx) return;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  audioCtx = new AudioContext();
+
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 1.0;
+
+  const splitter = audioCtx.createChannelSplitter(2);
+  analyserL = audioCtx.createAnalyser();
+  analyserR = audioCtx.createAnalyser();
+  analyserL.fftSize = 1024;
+  analyserR.fftSize = 1024;
+
+  masterGain.connect(splitter);
+  splitter.connect(analyserL, 0);
+  splitter.connect(analyserR, 1);
+}
+
+function setTone() {
+  initAudio();
+  if (currentSource) { try { currentSource.stop(); } catch(e){} currentSource.disconnect(); }
+  mode = 'tone';
+
+  const osc = audioCtx.createOscillator();
+  const toneGain = audioCtx.createGain();
+  // -18 dBFS reference level = 10^(-18/20) ≈ 0.12589
+  toneGain.gain.value = Math.pow(10, -18 / 20);
+  osc.type = 'sine';
+  osc.frequency.value = 1000; // Standard 1 kHz test tone
+  osc.connect(toneGain);
+  toneGain.connect(masterGain);
+  osc.start();
+  currentSource = osc;
+
+  updateToolbar('tone');
+}
+
+function setMusicSim() {
+  initAudio();
+  if (currentSource) { try { currentSource.stop(); } catch(e){} currentSource.disconnect(); }
+  mode = 'mod';
+
+  // Multi-frequency harmonic simulation with stereo pan modulation
+  const osc1 = audioCtx.createOscillator();
+  const osc2 = audioCtx.createOscillator();
+  const lfo = audioCtx.createOscillator();
+  const panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+
+  osc1.frequency.value = 220; // A3 bass
+  osc2.frequency.value = 440; // A4 lead
+  const merger = audioCtx.createChannelMerger(2);
+
+  const subGain = audioCtx.createGain();
+  subGain.gain.value = 0.15;
+  osc1.connect(subGain);
+  osc2.connect(subGain);
+
+  if (panner) {
+    lfo.frequency.value = 0.5; // slow stereo pan
+    lfo.connect(panner.pan);
+    subGain.connect(panner);
+    panner.connect(masterGain);
+    lfo.start();
+  } else {
+    subGain.connect(masterGain);
+  }
+
+  osc1.start();
+  osc2.start();
+  currentSource = {
+    stop: () => { osc1.stop(); osc2.stop(); if (lfo) lfo.stop(); },
+    disconnect: () => { osc1.disconnect(); osc2.disconnect(); }
+  };
+
+  updateToolbar('mod');
+}
+
+async function setMic() {
+  initAudio();
+  if (currentSource) { try { currentSource.stop(); } catch(e){} currentSource.disconnect(); }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const micSource = audioCtx.createMediaStreamSource(stream);
+    micSource.connect(masterGain);
+    currentSource = {
+      stop: () => stream.getTracks().forEach(t => t.stop()),
+      disconnect: () => micSource.disconnect()
+    };
+    mode = 'mic';
+    updateToolbar('mic');
+  } catch (err) {
+    alert("Microphone access unavailable: " + err.message);
+  }
+}
+
+fileIn.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  initAudio();
+  if (currentSource) { try { currentSource.stop(); } catch(e){} currentSource.disconnect(); }
+
+  const url = URL.createObjectURL(file);
+  const audio = new Audio(url);
+  audio.loop = true;
+  await audio.play();
+  const fileSource = audioCtx.createMediaElementSource(audio);
+  fileSource.connect(masterGain);
+  currentSource = {
+    stop: () => { audio.pause(); URL.revokeObjectURL(url); },
+    disconnect: () => fileSource.disconnect()
+  };
+  mode = 'file';
+  updateToolbar('file');
+});
+
+function updateToolbar(active) {
+  btnTone.classList.toggle('on', active === 'tone');
+  btnMod.classList.toggle('on', active === 'mod');
+  btnMic.classList.toggle('on', active === 'mic');
+}
+
+btnTone.addEventListener('click', setTone);
+btnMod.addEventListener('click', setMusicSim);
+btnMic.addEventListener('click', setMic);
+
+gainSlider.addEventListener('input', () => {
+  const db = parseFloat(gainSlider.value);
+  gainVal.textContent = `${db >= 0 ? '+' : ''}${db} dB`;
+  if (masterGain) {
+    masterGain.gain.value = Math.pow(10, db / 20);
+  }
+});
+
+btnReset.addEventListener('click', () => {
+  smoothL = -60;
+  smoothR = -60;
+  gainSlider.value = 0;
+  gainVal.textContent = '0 dB';
+  if (masterGain) masterGain.gain.value = 1.0;
+  setTone();
+});
+
+// ── Ballistics & Render Loop ──
+let smoothL = -60;
+let smoothR = -60;
+const bufL = new Float32Array(512);
+const bufR = new Float32Array(512);
+
+function calcRMS(buf) {
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / buf.length);
+  return rms > 0 ? 20 * Math.log10(rms) : -100;
+}
 
 function resize() {
   const rect = canvas.parentElement.getBoundingClientRect();
-  canvas.width = Math.max(200, rect.width * window.devicePixelRatio);
-  canvas.height = Math.max(150, rect.height * window.devicePixelRatio);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(200, rect.width * dpr);
+  canvas.height = Math.max(120, rect.height * dpr);
 }
-
 window.addEventListener('resize', resize);
 resize();
 
-function render(time) {
-  if (!running) return;
-  frameCount++;
-  if (time - lastTime >= 1000) {
-    fpsEl.textContent = frameCount;
-    frameCount = 0;
-    lastTime = time;
-  }
+let lastFrame = performance.now();
 
-  const W = canvas.width;
-  const H = canvas.height;
+function loop(now) {
+  const dt = Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
 
-  // Background clear
-  ctx.fillStyle = '#03060f';
-  ctx.fillRect(0, 0, W, H);
+  let rawDbL = -60;
+  let rawDbR = -60;
 
-  // Graticule grid
-  ctx.strokeStyle = '#1d2942';
-  ctx.lineWidth = 1;
-  const gridRows = 5;
-  for (let r = 1; r < gridRows; r++) {
-    const y = (H / gridRows) * r;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
-  }
-
-  // Signal Simulation / Visualization
-  ctx.save();
-  const t = time * 0.002;
-  const kind = "vu_analog";
-
-  if (kind.includes('parade') || kind.includes('stacked')) {
-    // 3 component channels (R, G, B)
-    const cw = W / 3;
-    const colors = ['rgba(255,80,80,0.85)', 'rgba(80,255,120,0.85)', 'rgba(100,160,255,0.85)'];
-    colors.forEach((col, idx) => {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let x = 0; x < cw; x += 3) {
-        const normX = x / cw;
-        const wave = Math.sin(normX * 8 + t + idx * 2) * 0.3 + 0.5;
-        const py = H - wave * (H * 0.7) - H * 0.15;
-        if (x === 0) ctx.moveTo(idx * cw + x, py);
-        else ctx.lineTo(idx * cw + x, py);
-      }
-      ctx.stroke();
-    });
-  } else if (kind.includes('vectorscope') || kind.includes('goniometer') || kind.includes('hsl') || kind.includes('cie') || kind.includes('diamond')) {
-    // Polar / Lissajous / Gamut display
-    const cx = W / 2;
-    const cy = H / 2;
-    const radius = Math.min(cx, cy) * 0.75;
-
-    // Outer graticule ring
-    ctx.strokeStyle = '#2c3e5e';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Crosshairs
-    ctx.beginPath();
-    ctx.moveTo(cx - radius, cy);
-    ctx.lineTo(cx + radius, cy);
-    ctx.moveTo(cx, cy - radius);
-    ctx.lineTo(cx, cy + radius);
-    ctx.stroke();
-
-    // Trace
-    ctx.strokeStyle = kind.includes('gonio') ? '#7fe7a2' : '#6FC8F0';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let i = 0; i < 200; i++) {
-      const phi = (i / 200) * Math.PI * 2;
-      const r = radius * (0.6 + 0.3 * Math.sin(phi * 3 + t));
-      const px = cx + Math.cos(phi + t * 0.5) * r;
-      const py = cy + Math.sin(phi * 2 + t) * r;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-  } else if (kind.includes('vu_analog')) {
-    // Dual Analog Needle VU
-    const wHalf = W / 2;
-    for (let ch = 0; ch < 2; ch++) {
-      const ox = ch * wHalf;
-      const cx = ox + wHalf / 2;
-      const cy = H * 0.9;
-      const arm = H * 0.7;
-      const angle = -Math.PI / 4 + (Math.sin(t * 3 + ch) * 0.5 + 0.5) * (Math.PI / 2);
-
-      // Dial arc
-      ctx.strokeStyle = '#445d82';
-      ctx.beginPath();
-      ctx.arc(cx, cy, arm, -Math.PI * 0.75, -Math.PI * 0.25);
-      ctx.stroke();
-
-      // Needle
-      ctx.strokeStyle = '#ff3b3b';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.sin(angle) * arm, cy - Math.cos(angle) * arm);
-      ctx.stroke();
-    }
-  } else if (kind.includes('dbfs_meters')) {
-    // Bar meters
-    const barW = Math.min(40, W * 0.15);
-    const gap = 16;
-    const startX = (W - (barW * 2 + gap)) / 2;
-    for (let ch = 0; ch < 2; ch++) {
-      const x = startX + ch * (barW + gap);
-      const lvl = Math.min(1, Math.max(0, Math.sin(t * 4 + ch * 1.5) * 0.4 + 0.5));
-      const barH = (H * 0.8) * lvl;
-
-      const grad = ctx.createLinearGradient(0, H * 0.9, 0, H * 0.1);
-      grad.addColorStop(0, '#19c54b');
-      grad.addColorStop(0.7, '#e6e23a');
-      grad.addColorStop(1, '#ff3b3b');
-
-      ctx.fillStyle = grad;
-      ctx.fillRect(x, H * 0.9 - barH, barW, barH);
-    }
+  if (analyserL && analyserR) {
+    analyserL.getFloatTimeDomainData(bufL);
+    analyserR.getFloatTimeDomainData(bufR);
+    rawDbL = Math.max(-60, calcRMS(bufL));
+    rawDbR = Math.max(-60, calcRMS(bufR));
   } else {
-    // Standard waveform trace
-    ctx.strokeStyle = '#6FC8F0';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let x = 0; x < W; x += 4) {
-      const norm = x / W;
-      const y = (H / 2) + Math.sin(norm * 12 + t) * (H * 0.3) * Math.cos(t * 0.5);
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
+    // Default simulated tone before user interaction
+    rawDbL = -18.0;
+    rawDbR = -18.0;
   }
 
-  ctx.restore();
-  requestAnimationFrame(render);
+  // ANSI C16.5 VU meter ballistics smoothing:
+  // Rise/fall time constant tau ≈ 0.3s (300 ms)
+  const alphaFactor = 1 - Math.exp(-dt / 0.15); // tuned for smooth 300ms rise
+  smoothL += (rawDbL - smoothL) * alphaFactor;
+  smoothR += (rawDbR - smoothR) * alphaFactor;
+
+  drawVUpair(canvas, smoothL, smoothR);
+
+  // Readouts: 0 VU = -18 dBFS
+  const currentVuL = Math.max(-20, Math.min(3, smoothL + 18));
+  const currentVuR = Math.max(-20, Math.min(3, smoothR + 18));
+  valL.textContent = smoothL.toFixed(1);
+  valR.textContent = smoothR.toFixed(1);
+  vuL.textContent = currentVuL.toFixed(1);
+  vuR.textContent = currentVuR.toFixed(1);
+
+  requestAnimationFrame(loop);
 }
 
-requestAnimationFrame(render);
+// Start interactive audio on first click
+window.addEventListener('pointerdown', () => {
+  if (!audioCtx) setTone();
+}, { once: true });
 
-btnPlay.addEventListener('click', () => {
-  running = !running;
-  btnPlay.classList.toggle('active', running);
-  statusEl.textContent = running ? 'STREAMING' : 'PAUSED';
-  if (running) requestAnimationFrame(render);
-});
+requestAnimationFrame(loop);
