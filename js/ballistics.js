@@ -1,104 +1,144 @@
 // js/ballistics.js — Ballistics Engine & Preset Library for TEST.AUDIO.VuAnalog
-// Sourced from the APK.audio GUI Frames sample library (5_Samples/2_Metering/1_Needle)
-// Conforms to ANSI C16.5, DIN 45406, BS 4297, ITU-R BS.1770, and Console profiles.
+// Kept in sync with APK.audio GUI Frames reference:
+// "Widget Samples -> METERING -> Needle -> REF" (ref/reference_meters.json)
+// Conforming to ANSI C16.5, DIN 45406, BS 4297, ITU-R BS.1770, and Console profiles.
+
+export const REF_SOURCE = 'ref/reference_meters.json';
 
 export const BALLISTICS_LIBRARY = {
-  // ── I. Averaging & Loudness Standards ──
+  // ── I. REF: Averaging & Loudness Standards ──
   standard_vu: {
     id: 'standard_vu',
-    name: 'Standard VU (ANSI C16.5)',
-    category: 'Averaging / Loudness',
+    refId: 'Standard_VU',
+    block: 'Averaging_Meters',
+    name: 'REF: Standard VU (ANSI C16.5)',
+    category: 'REF: Averaging / Loudness',
     standard: 'ANSI C16.5-1942',
     attack_ms: 300,
     release_ms: 300,
     dwell_time: 300,
     hold_time: 0,
     resting_point: -20.0,
+    domain: { min: -20.0, max: 3.0, reff_point: 0.0, step: 5.0 },
     notes: "ANSI C16.5-1942. Philosophy: Approximates 'perceived loudness'. 0 VU = +4 dBu (-18 dBFS). 300ms attack/decay, 1-1.5% overshoot.",
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
   rms_calculated: {
     id: 'rms_calculated',
-    name: 'RMS (Calculated)',
-    category: 'Averaging / Loudness',
+    refId: 'RMS_Meter',
+    block: 'Averaging_Meters',
+    name: 'REF: RMS (Calculated)',
+    category: 'REF: Averaging / Loudness',
     standard: 'AES-17 / RMS Power',
     attack_ms: 300,
     release_ms: 300,
     dwell_time: 300,
     hold_time: 0,
     resting_point: -20.0,
+    domain: { min: -20.0, max: 3.0, reff_point: 0.0, step: 5.0 },
     notes: 'Mathematical calculation of average power over time. Ballistics: Variable windowing.',
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
   lufs_momentary: {
     id: 'lufs_momentary',
-    name: 'LUFS Momentary (400ms)',
-    category: 'Loudness',
+    refId: 'LUFS_Momentary',
+    block: 'Digital_Meters',
+    name: 'REF: LUFS Momentary (400ms)',
+    category: 'REF: Digital / Loudness',
     standard: 'ITU-R BS.1770-4 / EBU R128',
     attack_ms: 400,
     release_ms: 400,
     dwell_time: 400,
     hold_time: 0,
     resting_point: -36.0,
+    domain: { min: -36.0, max: 6.0, reff_point: 0.0, step: 6.0 },
     notes: 'ITU-R BS.1770-4. Sliding 400ms window perceived loudness calculation.',
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
   lufs_shortterm: {
     id: 'lufs_shortterm',
-    name: 'LUFS Short-Term (3s)',
-    category: 'Loudness',
+    refId: 'LUFS_ShortTerm',
+    block: 'Digital_Meters',
+    name: 'REF: LUFS Short-Term (3s)',
+    category: 'REF: Digital / Loudness',
     standard: 'ITU-R BS.1770-4 / EBU R128',
     attack_ms: 3000,
     release_ms: 3000,
     dwell_time: 1000,
     hold_time: 0,
     resting_point: -36.0,
+    domain: { min: -36.0, max: 6.0, reff_point: 0.0, step: 6.0 },
     notes: 'ITU-R BS.1770-4. Sliding 3s window K-weighted average.',
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
 
-  // ── II. Quasi-Peak & Protection Meters ──
+  // ── II. REF: Quasi-Peak & Protection Meters ──
   ppm_type_1: {
     id: 'ppm_type_1',
-    name: 'PPM Type I (DIN 45406)',
-    category: 'Quasi-Peak (Protection)',
+    refId: 'PPM_Type_I',
+    block: 'Protection_Meters',
+    name: 'REF: PPM Type I (DIN 45406)',
+    category: 'REF: Quasi-Peak (Protection)',
     standard: 'DIN 45406 / IEC 60268-10 I',
     attack_ms: 10,
     release_ms: 1500,
     dwell_time: 500,
     hold_time: 0,
     resting_point: -50.0,
-    notes: 'DIN 45406. Catches fast peaks to prevent overload. 10ms attack, 1.5s decay (-20dB).',
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    domain: { min: -50.0, max: 5.0, reff_point: 0.0, step: 10.0 },
+    notes: 'DIN 45406. Protection: Catches peaks to prevent overload. 10ms attack, 1.5s decay (-20dB).',
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
   ppm_type_2: {
     id: 'ppm_type_2',
-    name: 'PPM Type II (BBC BS 4297)',
-    category: 'Quasi-Peak (Protection)',
+    refId: 'PPM_Type_II',
+    block: 'Protection_Meters',
+    name: 'REF: PPM Type II (BBC BS 4297)',
+    category: 'REF: Quasi-Peak (Protection)',
     standard: 'BS 4297 / IEC 60268-10 II',
     attack_ms: 10,
     release_ms: 2800,
     dwell_time: 1000,
     hold_time: 0,
     resting_point: -50.0,
+    domain: { min: -50.0, max: 5.0, reff_point: 0.0, step: 10.0 },
     notes: 'BS 4297. Reduces operator eye fatigue. 10ms attack, 2.8s decay (-24dB).',
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
   true_peak: {
     id: 'true_peak',
-    name: 'True Peak (dBTP / ITU-R BS.1770)',
-    category: 'Digital Peak',
+    refId: 'Digital_True_Peak',
+    block: 'Digital_Meters',
+    name: 'REF: True Peak dBTP (ITU-R BS.1770)',
+    category: 'REF: Digital / Loudness',
     standard: 'ITU-R BS.1770',
     attack_ms: 1, // virtually instantaneous
     release_ms: 5000,
     dwell_time: 1000,
     hold_time: 2000,
     resting_point: -60.0,
-    notes: "ITU-R BS.1770. 'God View'. 4x Oversampling peak hold. Instant attack, 2s peak hold decay.",
-    source: '5_Samples/2_Metering/1_Needle/0_REF/reference_meters.json'
+    domain: { min: -60.0, max: 0.0, reff_point: 0.0, step: 10.0 },
+    notes: "ITU-R BS.1770. 'God View'. 4x Oversampling to detect Inter-Sample Peaks. Ballistics: Instant attack, peak hold decay.",
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
+  },
+  scale_bbc: {
+    id: 'scale_bbc',
+    refId: 'Scale_BBC',
+    block: 'Hardware_Scales_1',
+    name: 'REF: Standard BBC (BS 4297)',
+    category: 'REF: Hardware Scales',
+    standard: 'BS 4297 Scale 1 to 7',
+    attack_ms: 10,
+    release_ms: 2800,
+    dwell_time: 500,
+    hold_time: 0,
+    resting_point: -20.0, // mapped to dBFS floor for analog display
+    domain: { min: 1.0, max: 7.0, reff_point: 4.0, step: 1.0 },
+    notes: "Scale 1 to 7. BS4297. White on Matte Black. Mark '4' is reference (10ms attack, 2.8s release).",
+    source: 'Widget Samples / METERING / Needle / REF (ref/reference_meters.json)'
   },
 
-  // ── III. Studio Console Profiles ──
+  // ── III. Studio Console Profiles (Needle Suite) ──
   console_med: {
     id: 'console_med',
     name: 'Console Standard (Hold 500ms)',
@@ -222,7 +262,7 @@ export class BallisticsEngine {
   }
 
   /**
-   * Update needle position for elapsed time dt (seconds) at current wall clock time now (ms).
+   * Update needle position for elapsed time dt (seconds) at current wall clock time nowMs.
    * @param {number} rawDb - Input signal level in dBFS (typically -60 to 0 dBFS)
    * @param {number} dt - Time delta since last update in seconds
    * @param {number} nowMs - Current timestamp in milliseconds (e.g. performance.now())
