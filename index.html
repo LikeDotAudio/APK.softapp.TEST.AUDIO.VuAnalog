@@ -112,6 +112,43 @@
     }
     input[type="file"] { display: none; }
 
+    select {
+      font: bold 10px sans-serif;
+      letter-spacing: 0.5px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--edge);
+      background: #0c1730;
+      color: var(--text);
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+    select:hover, select:focus {
+      border-color: var(--hc);
+    }
+
+    .bal-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .bal-badge {
+      font-size: 10px;
+      font-family: monospace;
+      color: var(--hc);
+      background: rgba(194, 183, 75, 0.1);
+      border: 1px solid rgba(194, 183, 75, 0.3);
+      padding: 4px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
     .ctrl-group {
       display: flex;
       align-items: center;
@@ -138,6 +175,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      cursor: crosshair;
     }
     canvas {
       width: 100%;
@@ -149,10 +187,13 @@
     .readout {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       font-family: monospace;
       font-size: 11px;
       color: var(--dim);
       padding: 2px 4px;
+      flex-wrap: wrap;
+      gap: 8px;
     }
     .readout b { color: var(--text); }
   </style>
@@ -161,13 +202,14 @@
 
   <div class="card-wrap">
     <div class="card-header">
-      <div class="card-title">VU · ANALOG</div>
+      <div class="card-title">VU · ANALOG · BALLISTICS LAB</div>
       <div class="header-btns">
         <button class="btn-icon" title="Reset Meter" id="btnReset">↺</button>
         <button class="btn-icon" title="Close" id="btnClose">×</button>
       </div>
     </div>
 
+    <!-- Source Controls Toolbar -->
     <div class="toolbar">
       <button id="btnTone" class="on">∿ 1kHz Tone (-18 dBFS)</button>
       <button id="btnMod">≋ Stereo Music Sim</button>
@@ -176,6 +218,7 @@
         📁 Load Audio
         <input type="file" id="fileIn" accept="audio/*,video/*">
       </label>
+      <button id="btnPulse" title="Trigger transient test pulse to observe needle ballistics">⚡ Test Pulse</button>
       
       <div class="ctrl-group">
         <span>GAIN:</span>
@@ -184,13 +227,46 @@
       </div>
     </div>
 
-    <div class="meter-box">
+    <!-- Ballistics Library Selector Toolbar -->
+    <div class="toolbar" style="padding-top: 0; border-top: 1px dashed rgba(29, 41, 66, 0.6); margin-top: 2px;">
+      <div class="bal-group">
+        <span>BALLISTICS:</span>
+        <select id="balSelect">
+          <optgroup label="Averaging &amp; Loudness Standards">
+            <option value="standard_vu" selected>Standard VU (ANSI C16.5 · 300ms)</option>
+            <option value="rms_calculated">RMS Calculated (300ms window)</option>
+            <option value="lufs_momentary">LUFS Momentary (400ms window)</option>
+            <option value="lufs_shortterm">LUFS Short-Term (3s window)</option>
+          </optgroup>
+          <optgroup label="Quasi-Peak (Protection)">
+            <option value="ppm_type_1">PPM Type I (DIN 45406 · 10ms / 1.5s)</option>
+            <option value="ppm_type_2">PPM Type II (BBC BS 4297 · 10ms / 2.8s)</option>
+            <option value="true_peak">True Peak dBTP (ITU-R BS.1770 · 2s Hold)</option>
+          </optgroup>
+          <optgroup label="Console &amp; Physical Profiles">
+            <option value="console_med">Console Standard (200ms / 800ms / 500ms Hold)</option>
+            <option value="fast_response">Fast Response (50ms / 200ms)</option>
+            <option value="slow_response">Slow Response (500ms / 2s)</option>
+            <option value="super_slow">Super Slow Vintage (1s / 4s)</option>
+            <option value="peak_hold_3s">Peak Hold (3s Hold / 10s Decay)</option>
+            <option value="master_console">Master Console Bank (300ms / 1.5s)</option>
+            <option value="compressor_gr">Compressor Gain Reduction (10ms / 100ms)</option>
+          </optgroup>
+        </select>
+      </div>
+      <span id="balBadge" class="bal-badge">ANSI C16.5 · Att: 300ms · Rel: 300ms</span>
+      <span style="font-size: 10px; color: var(--dim); margin-left: auto;">Middle-click canvas or click ⚡ to pulse ballistics</span>
+    </div>
+
+    <!-- Meter Canvas Container -->
+    <div class="meter-box" title="Middle-click to fire a ballistic test pulse">
       <canvas id="vuCanvas"></canvas>
     </div>
 
+    <!-- Telemetry Readout Footer -->
     <div class="readout">
       <span>LEFT: <b id="valL">-18.0</b> dBFS (<b id="vuL">0.0</b> VU)</span>
-      <span>CALIBRATION: <b>0 VU = -18 dBFS</b> (ANSI C16.5)</span>
+      <span id="calibText">CALIBRATION: <b>0 VU = -18 dBFS</b> (ANSI C16.5)</span>
       <span>RIGHT: <b id="valR">-18.0</b> dBFS (<b id="vuR">0.0</b> VU)</span>
     </div>
   </div>

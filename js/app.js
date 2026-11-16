@@ -1,5 +1,8 @@
 // TEST.AUDIO.VuAnalog — Standalone Analog Moving-Coil VU Meter
-// Conforms to ANSI C16.5 ballistic response (-20 to +3 VU, 0 VU = -18 dBFS).
+// Conforms to ANSI C16.5, DIN 45406, BS 4297, ITU-R BS.1770, and Console ballistic profiles.
+// Sourced from APK.audio GUI Frames sample library (5_Samples/2_Metering/1_Needle)
+
+import { BALLISTICS_LIBRARY, BallisticsEngine } from './ballistics.js';
 
 const canvas = document.getElementById('vuCanvas');
 const ctx = canvas.getContext('2d');
@@ -10,10 +13,41 @@ const vuR = document.getElementById('vuR');
 const btnTone = document.getElementById('btnTone');
 const btnMod = document.getElementById('btnMod');
 const btnMic = document.getElementById('btnMic');
+const btnPulse = document.getElementById('btnPulse');
 const fileIn = document.getElementById('fileIn');
 const gainSlider = document.getElementById('gainSlider');
 const gainVal = document.getElementById('gainVal');
 const btnReset = document.getElementById('btnReset');
+const balSelect = document.getElementById('balSelect');
+const balBadge = document.getElementById('balBadge');
+const calibText = document.getElementById('calibText');
+
+// ── Ballistics Engines ──
+let currentPreset = BALLISTICS_LIBRARY.standard_vu;
+const engineL = new BallisticsEngine(currentPreset);
+const engineR = new BallisticsEngine(currentPreset);
+
+function updateBallisticsBadge(preset) {
+  if (balBadge) {
+    const holdStr = preset.hold_time ? ` · Hold: ${preset.hold_time}ms` : '';
+    balBadge.textContent = `${preset.standard} · Att: ${preset.attack_ms}ms · Rel: ${preset.release_ms}ms${holdStr}`;
+    balBadge.title = preset.notes;
+  }
+  if (calibText) {
+    calibText.innerHTML = `CALIBRATION: <b>0 VU = -18 dBFS</b> (${preset.name})`;
+  }
+}
+
+if (balSelect) {
+  balSelect.addEventListener('change', () => {
+    const key = balSelect.value;
+    const preset = BALLISTICS_LIBRARY[key] || BALLISTICS_LIBRARY.standard_vu;
+    currentPreset = preset;
+    engineL.configure(preset);
+    engineR.configure(preset);
+    updateBallisticsBadge(preset);
+  });
+}
 
 // ── Palette Constants (from SPOG domain/palette.ts) ──
 const PAL = {
@@ -33,7 +67,7 @@ function alpha(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// ── Drawing Engine (matching SPOG scopes-audio.ts) ──
+// ── Drawing Engine (matching SPOG scopes-audio.ts & libControl/metering) ──
 const VU_LO = -20, VU_HI = 3;
 const VU_MARKS = [
   [-20, '20'], [-10, '10'], [-7, '7'], [-5, '5'], [-3, '3'], [0, '0'], [3, '+3']
@@ -183,7 +217,6 @@ function setMusicSim() {
 
   osc1.frequency.value = 220; // A3 bass
   osc2.frequency.value = 440; // A4 lead
-  const merger = audioCtx.createChannelMerger(2);
 
   const subGain = audioCtx.createGain();
   subGain.gain.value = 0.15;
@@ -248,6 +281,41 @@ fileIn.addEventListener('change', async (e) => {
   updateToolbar('file');
 });
 
+// ── Transient Pulse Testing (matches FieldComponent ballistics test) ──
+let pulseUntil = 0;
+let pulseDb = -6.0;
+
+function triggerPulse(targetDb = -6.0) {
+  initAudio();
+  pulseUntil = performance.now() + 150;
+  pulseDb = targetDb;
+
+  if (audioCtx && masterGain) {
+    const osc = audioCtx.createOscillator();
+    const pGain = audioCtx.createGain();
+    pGain.gain.value = Math.pow(10, targetDb / 20);
+    osc.type = 'triangle';
+    osc.frequency.value = 800;
+    osc.connect(pGain);
+    pGain.connect(masterGain);
+    const now = audioCtx.currentTime;
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+}
+
+if (btnPulse) {
+  btnPulse.addEventListener('click', () => triggerPulse(-6.0));
+}
+
+// Middle-click (or click) on canvas to test needle ballistics
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 1 || e.altKey || e.shiftKey) {
+    e.preventDefault();
+    triggerPulse(-6.0);
+  }
+});
+
 function updateToolbar(active) {
   btnTone.classList.toggle('on', active === 'tone');
   btnMod.classList.toggle('on', active === 'mod');
@@ -267,8 +335,8 @@ gainSlider.addEventListener('input', () => {
 });
 
 btnReset.addEventListener('click', () => {
-  smoothL = -60;
-  smoothR = -60;
+  engineL.reset();
+  engineR.reset();
   gainSlider.value = 0;
   gainVal.textContent = '0 dB';
   if (masterGain) masterGain.gain.value = 1.0;
@@ -276,8 +344,6 @@ btnReset.addEventListener('click', () => {
 });
 
 // ── Ballistics & Render Loop ──
-let smoothL = -60;
-let smoothR = -60;
 const bufL = new Float32Array(512);
 const bufR = new Float32Array(512);
 
@@ -317,11 +383,15 @@ function loop(now) {
     rawDbR = -18.0;
   }
 
-  // ANSI C16.5 VU meter ballistics smoothing:
-  // Rise/fall time constant tau ≈ 0.3s (300 ms)
-  const alphaFactor = 1 - Math.exp(-dt / 0.15); // tuned for smooth 300ms rise
-  smoothL += (rawDbL - smoothL) * alphaFactor;
-  smoothR += (rawDbR - smoothR) * alphaFactor;
+  // Inject test pulse if active
+  if (now < pulseUntil) {
+    rawDbL = Math.max(rawDbL, pulseDb);
+    rawDbR = Math.max(rawDbR, pulseDb);
+  }
+
+  // Process ballistics through library engine
+  const smoothL = engineL.update(rawDbL, dt, now);
+  const smoothR = engineR.update(rawDbR, dt, now);
 
   drawVUpair(canvas, smoothL, smoothR);
 
@@ -340,5 +410,8 @@ function loop(now) {
 window.addEventListener('pointerdown', () => {
   if (!audioCtx) setTone();
 }, { once: true });
+
+// Initialize badge with default preset
+updateBallisticsBadge(currentPreset);
 
 requestAnimationFrame(loop);
